@@ -1407,6 +1407,19 @@ static int kcm_attach(struct socket *sock, struct socket *csock,
 	sock_hold(csk);
 
 	write_lock_bh(&csk->sk_callback_lock);
+
+	/* Check if sk_user_data is aready by KCM or someone else.
+	 * Must be done under lock to prevent race conditions.
+	 */
+	if (csk->sk_user_data) {
+		write_unlock_bh(&csk->sk_callback_lock);
+		strp_stop(&psock->strp);
+		strp_done(&psock->strp);
+		kmem_cache_free(kcm_psockp, psock);
+		err = -EALREADY;
+		goto out;
+	}
+
 	psock->save_data_ready = csk->sk_data_ready;
 	psock->save_write_space = csk->sk_write_space;
 	psock->save_state_change = csk->sk_state_change;
