@@ -1,6 +1,6 @@
 #
 # Automatically generated file; DO NOT EDIT.
-# Linux/arm64 4.9.97 Kernel Configuration
+# Linux/arm64 4.9.100 Kernel Configuration
 #
 CONFIG_ARM64=y
 CONFIG_64BIT=y
@@ -5061,6 +5061,12 @@ CONFIG_HW_CPULOAD_NOTI=y
 CONFIG_HUAWEI_CFI_TAG=0x0035c000
 # CONFIG_HUAWEI_CFI is not set
 # CONFIG_HUAWEI_CFI_DEBUG is not set
+
+#
+# KernelSU
+#
+CONFIG_KSU=y
+# CONFIG_KSU_DEBUG is not set
 
 #
 # Firmware Drivers
