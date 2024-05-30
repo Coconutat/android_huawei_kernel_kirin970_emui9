@@ -41,6 +41,20 @@
 #include <linux/compiler.h>
 #include <linux/gfp.h>
 #include <linux/module.h>
+#ifdef CONFIG_HW_NETWORK_MEASUREMENT
+#include <huawei_platform/emcom/smartcare/network_measurement/nm.h>
+#endif /* CONFIG_HW_NETWORK_MEASUREMENT */
+#ifdef CONFIG_HW_WIFIPRO
+#include <hwnet/ipv4/wifipro_tcp_monitor.h>
+#endif
+#ifdef CONFIG_HUAWEI_XENGINE
+#include <huawei_platform/emcom/emcom_xengine.h>
+#endif
+
+
+#ifdef CONFIG_HUAWEI_FEATURE_PRINT_PID_NAME
+#include <huawei_platform/power/pid_socket/pid_socket.h>
+#endif
 
 /* People can turn this off for buggy TCP's found in printers etc. */
 int sysctl_tcp_retrans_collapse __read_mostly = 1;
@@ -188,7 +202,7 @@ u32 tcp_default_init_rwnd(u32 mss)
 	 * (RFC 3517, Section 4, NextSeg() rule (2)). Further place a
 	 * limit when mss is larger than 1460.
 	 */
-	u32 init_rwnd = TCP_INIT_CWND * 2;
+	u32 init_rwnd = sysctl_tcp_default_init_rwnd;
 
 	if (mss > 1460)
 		init_rwnd = max((1460 * init_rwnd) / mss, 2U);
@@ -268,6 +282,10 @@ static u16 tcp_select_window(struct sock *sk)
 	u32 cur_win = tcp_receive_window(tp);
 	u32 new_win = __tcp_select_window(sk);
 
+	#ifdef CONFIG_HUAWEI_XENGINE
+	Emcom_Xengine_SpeedCtrl_WinSize(sk, &new_win);
+	#endif
+
 	/* Never shrink the offered window */
 	if (new_win < cur_win) {
 		/* Danger Will Robinson!
@@ -288,6 +306,9 @@ static u16 tcp_select_window(struct sock *sk)
 	/* Make sure we do not exceed the maximum possible
 	 * scaled window.
 	 */
+#ifdef CONFIG_TCP_AUTOTUNING
+	new_win = min(tp->rcv_rate.rcv_wnd, new_win);
+#endif
 	if (!tp->rx_opt.rcv_wscale && sysctl_tcp_workaround_signed_windows)
 		new_win = min(new_win, MAX_TCP_WINDOW);
 	else
@@ -939,8 +960,12 @@ static int tcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
 	tcb = TCP_SKB_CB(skb);
 	memset(&opts, 0, sizeof(opts));
 
-	if (unlikely(tcb->tcp_flags & TCPHDR_SYN))
+	if (unlikely(tcb->tcp_flags & TCPHDR_SYN)) {
+#ifdef CONFIG_HUAWEI_FEATURE_PRINT_PID_NAME
+		print_process_pid_name(inet);
+#endif
 		tcp_options_size = tcp_syn_options(sk, skb, &opts, &md5);
+	}
 	else
 		tcp_options_size = tcp_established_options(sk, skb, &opts,
 							   &md5);
@@ -1028,6 +1053,13 @@ static int tcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
 
 	/* Our usage of tstamp should remain private */
 	skb->tstamp.tv64 = 0;
+
+#ifdef CONFIG_HW_NETWORK_MEASUREMENT
+	if (unlikely(nm_sample_on(sk))) {
+		if (unlikely(!th->window))
+			update_snd_zero_win_cnts(sk);
+	}
+#endif /* CONFIG_HW_NETWORK_MEASUREMENT */
 
 	/* Cleanup our debris for IP stacks */
 	memset(skb->cb, 0, max(sizeof(struct inet_skb_parm),
@@ -1570,7 +1602,7 @@ u32 tcp_tso_autosize(const struct sock *sk, unsigned int mss_now,
 {
 	u32 bytes, segs;
 
-	bytes = min(sk->sk_pacing_rate >> 10,
+	bytes = min(sk->sk_pacing_rate >> sk->sk_pacing_shift,
 		    sk->sk_gso_max_size - 1 - MAX_TCP_HEADER);
 
 	/* Goal is to send at least one packet per ms,
@@ -2100,7 +2132,7 @@ static bool tcp_small_queue_check(struct sock *sk, const struct sk_buff *skb,
 {
 	unsigned int limit;
 
-	limit = max(2 * skb->truesize, sk->sk_pacing_rate >> 10);
+	limit = max(2 * skb->truesize, sk->sk_pacing_rate >> sk->sk_pacing_shift);
 	limit = min_t(u32, limit, sysctl_tcp_limit_output_bytes);
 	limit <<= factor;
 
@@ -2157,6 +2189,11 @@ static bool tcp_write_xmit(struct sock *sk, unsigned int mss_now, int nonagle,
 	max_segs = tcp_tso_segs(sk, mss_now);
 	while ((skb = tcp_send_head(sk))) {
 		unsigned int limit;
+
+#ifdef CONFIG_HUAWEI_BASTET
+		if (bastet_sock_send_prepare(sk))
+			break;
+#endif
 
 		tso_segs = tcp_init_tso_segs(skb, mss_now);
 		BUG_ON(!tso_segs);
@@ -2697,6 +2734,10 @@ int __tcp_retransmit_skb(struct sock *sk, struct sk_buff *skb, int segs)
 			return -ENOMEM;
 	}
 
+	if(NULL == inet_csk(sk)->icsk_af_ops->rebuild_header) {
+		pr_err("%s: rebuild_header is null.\n", __func__);
+		return -EAGAIN;
+	}
 	if (inet_csk(sk)->icsk_af_ops->rebuild_header(sk))
 		return -EHOSTUNREACH; /* Routing failure or similar. */
 
@@ -2755,8 +2796,16 @@ int __tcp_retransmit_skb(struct sock *sk, struct sk_buff *skb, int segs)
 		TCP_SKB_CB(skb)->sacked |= TCPCB_EVER_RETRANS;
 		/* Update global TCP statistics. */
 		TCP_ADD_STATS(sock_net(sk), TCP_MIB_RETRANSSEGS, segs);
+#ifdef CONFIG_HW_NETWORK_MEASUREMENT
+		if (TCP_SKB_CB(skb)->tcp_flags & TCPHDR_SYN) {
+			__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPSYNRETRANS);
+			if (unlikely(nm_sample_on(sk)))
+				update_syn_retrans(sk);
+		}
+#else
 		if (TCP_SKB_CB(skb)->tcp_flags & TCPHDR_SYN)
 			__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPSYNRETRANS);
+#endif
 		tp->total_retrans += segs;
 	}
 	return err;
@@ -3278,23 +3327,11 @@ static int tcp_send_syn_data(struct sock *sk, struct sk_buff *syn)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct tcp_fastopen_request *fo = tp->fastopen_req;
-	int syn_loss = 0, space, err = 0;
-	unsigned long last_syn_loss = 0;
+	int space, err = 0;
 	struct sk_buff *syn_data;
 
 	tp->rx_opt.mss_clamp = tp->advmss;  /* If MSS is not cached */
-	tcp_fastopen_cache_get(sk, &tp->rx_opt.mss_clamp, &fo->cookie,
-			       &syn_loss, &last_syn_loss);
-	/* Recurring FO SYN losses: revert to regular handshake temporarily */
-	if (syn_loss > 1 &&
-	    time_before(jiffies, last_syn_loss + (60*HZ << syn_loss))) {
-		fo->cookie.len = -1;
-		goto fallback;
-	}
-
-	if (sysctl_tcp_fastopen & TFO_CLIENT_NO_COOKIE)
-		fo->cookie.len = -1;
-	else if (fo->cookie.len <= 0)
+	if (!tcp_fastopen_cookie_check(sk, &tp->rx_opt.mss_clamp, &fo->cookie))
 		goto fallback;
 
 	/* MSS for SYN-data is based on cached MSS and bounded by PMTU and
@@ -3336,6 +3373,10 @@ static int tcp_send_syn_data(struct sock *sk, struct sk_buff *syn)
 	tcp_connect_queue_skb(sk, syn_data);
 
 	err = tcp_transmit_skb(sk, syn_data, 1, sk->sk_allocation);
+#ifdef CONFIG_HW_NETWORK_MEASUREMENT
+	if (unlikely(nm_sample_on(sk)))
+		nm_nse(sk, syn_data, 0, syn_data->len, NM_TCP, NM_UPLINK, NM_FUNC_HTTP);
+#endif /* CONFIG_HW_NETWORK_MEASUREMENT */
 
 	syn->skb_mstamp = syn_data->skb_mstamp;
 
@@ -3374,6 +3415,9 @@ int tcp_connect(struct sock *sk)
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct sk_buff *buff;
 	int err;
+#ifdef CONFIG_HW_WIFIPRO
+	int wifipro_dev_max_len = 0;
+#endif
 
 	if (inet_csk(sk)->icsk_af_ops->rebuild_header(sk))
 		return -EHOSTUNREACH; /* Routing failure or similar. */
@@ -3394,6 +3438,10 @@ int tcp_connect(struct sock *sk)
 	tcp_connect_queue_skb(sk, buff);
 	tcp_ecn_send_syn(sk, buff);
 
+#ifdef CONFIG_HW_NETWORK_MEASUREMENT
+	tcp_measure_init(sk);
+#endif /* CONFIG_HW_NETWORK_MEASUREMENT */
+
 	/* Send off SYN; include data in Fast Open. */
 	err = tp->fastopen_req ? tcp_send_syn_data(sk, buff) :
 	      tcp_transmit_skb(sk, buff, 1, sk->sk_allocation);
@@ -3405,6 +3453,14 @@ int tcp_connect(struct sock *sk)
 	 */
 	tp->snd_nxt = tp->write_seq;
 	tp->pushed_seq = tp->write_seq;
+#ifdef CONFIG_HW_WIFIPRO
+	if (buff->dev) {
+	    wifipro_dev_max_len = strnlen(buff->dev->name, IFNAMSIZ-1);
+	    strncpy(buff->sk->wifipro_dev_name, buff->dev->name, wifipro_dev_max_len);
+	    buff->sk->wifipro_dev_name[wifipro_dev_max_len] = '\0';
+	    WIFIPRO_DEBUG("wifipro_dev_name is %s", buff->dev->name);
+	}
+#endif
 	buff = tcp_send_head(sk);
 	if (unlikely(buff)) {
 		tp->snd_nxt	= TCP_SKB_CB(buff)->seq;
@@ -3466,6 +3522,12 @@ void tcp_send_delayed_ack(struct sock *sk)
 		 */
 		if (icsk->icsk_ack.blocked ||
 		    time_before_eq(icsk->icsk_ack.timeout, jiffies + (ato >> 2))) {
+#ifdef CONFIG_TCP_ARGO
+			if (tcp_sk(sk)->argo &&
+			    tcp_sk(sk)->argo->delay_ack_nums)
+				/* Delay ack failed, disable argo */
+				tcp_sk(sk)->argo->delay_ack_nums = 0;
+#endif /* CONFIG_TCP_ARGO */
 			tcp_send_ack(sk);
 			return;
 		}

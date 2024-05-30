@@ -24,6 +24,9 @@
 #include <net/inet_connection_sock.h>
 #include <net/inet_timewait_sock.h>
 #include <uapi/linux/tcp.h>
+#ifdef CONFIG_TCP_ARGO
+#include <huawei_platform/emcom/argo/tcp_argo.h>
+#endif /* CONFIG_TCP_ARGO */
 
 static inline struct tcphdr *tcp_hdr(const struct sk_buff *skb)
 {
@@ -219,8 +222,9 @@ struct tcp_sock {
 	} rack;
 	u16	advmss;		/* Advertised MSS			*/
 	u8	rate_app_limited:1,  /* rate_{delivered,interval_us} limited? */
+		fastopen_connect:1, /* FASTOPEN_CONNECT sockopt */
 		is_sack_reneg:1,    /* in recovery from loss with SACK reneg? */
-		unused:6;
+		unused:5;
 	u8	nonagle     : 4,/* Disable Nagle algorithm?             */
 		thin_lto    : 1,/* Use linear timeouts for thin streams */
 		thin_dupack : 1,/* Fast retransmit on first dupack      */
@@ -289,6 +293,12 @@ struct tcp_sock {
 	u32	sacked_out;	/* SACK'd packets			*/
 	u32	fackets_out;	/* FACK'd packets			*/
 
+#ifdef CONFIG_TCP_NODELAY
+	u16	nodelay_size;	/* packet size by delayed */
+	u8	nodelay;	/* Auto tcp no delay is disabled */
+	u8	pingpong;	/* send msg count without response */
+#endif
+
 	/* from STCP, retrans queue hinting */
 	struct sk_buff* lost_skb_hint;
 	struct sk_buff *retransmit_skb_hint;
@@ -333,14 +343,29 @@ struct tcp_sock {
 		u32	rtt;
 		u32	seq;
 		u32	time;
+#ifdef CONFIG_TCP_AUTOTUNING
+		u32	min_rtt;
+#endif
 	} rcv_rtt_est;
 
 /* Receiver queue space */
 	struct {
-		int	space;
+		u32	space;
 		u32	seq;
 		u32	time;
+#ifdef CONFIG_TCP_AUTOTUNING
+		u32	segs;
+#endif
 	} rcvq_space;
+
+#ifdef CONFIG_TCP_AUTOTUNING
+	struct {
+		u32	loss;
+		u32	bw;
+		u32	rtt_cnt;
+		u32	rcv_wnd;
+	} rcv_rate;
+#endif
 
 /* TCP-specific MTU probe information. */
 	struct {
@@ -366,6 +391,16 @@ struct tcp_sock {
 	 */
 	struct request_sock *fastopen_rsk;
 	u32	*saved_syn;
+
+#ifdef CONFIG_TCP_ARGO
+/* TCP ARGO */
+	struct tcp_argo *argo;
+#endif /* CONFIG_TCP_ARGO */
+
+#ifdef CONFIG_CHR_NETLINK_MODULE
+	u8 first_data_flag;
+	u8 data_net_flag;
+#endif
 };
 
 enum tsq_flags {

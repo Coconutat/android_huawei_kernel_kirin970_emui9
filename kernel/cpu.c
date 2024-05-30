@@ -31,6 +31,9 @@
 #include <trace/events/cpuhp.h>
 
 #include "smpboot.h"
+#ifdef CONFIG_HISI_BB
+#include <linux/hisi/hisi_bbox_diaginfo.h>
+#endif
 
 /**
  * cpuhp_cpu_state - Per cpu hotplug state storage
@@ -245,6 +248,13 @@ static struct {
 #define cpuhp_lock_acquire()      lock_map_acquire(&cpu_hotplug.dep_map)
 #define cpuhp_lock_release()      lock_map_release(&cpu_hotplug.dep_map)
 
+#ifdef CONFIG_ARCH_HISI
+void cpu_hotplug_lock_held(void)
+{
+	lockdep_assert_held(&cpu_hotplug.lock);
+}
+EXPORT_SYMBOL(cpu_hotplug_lock_held);
+#endif
 
 void get_online_cpus(void)
 {
@@ -910,6 +920,13 @@ static int __ref _cpu_down(unsigned int cpu, int tasks_frozen,
 	if (!cpu_present(cpu))
 		return -EINVAL;
 
+#ifdef CONFIG_HISI_CPU_ISOLATION
+	if (!tasks_frozen &&
+	    !cpu_isolated(cpu) &&
+	    num_online_uniso_cpus() == 1)
+		return -EBUSY;
+#endif
+
 	cpu_hotplug_begin();
 
 	cpuhp_tasks_frozen = tasks_frozen;
@@ -1100,6 +1117,11 @@ static int do_cpu_up(unsigned int cpu, enum cpuhp_state target)
 	}
 
 	err = _cpu_up(cpu, 0, target);
+
+#ifdef CONFIG_HISI_BB
+    cpu_up_diaginfo_record(cpu, err);
+#endif
+
 out:
 	cpu_maps_update_done();
 	return err;
@@ -1169,6 +1191,7 @@ void __weak arch_enable_nonboot_cpus_end(void)
 void enable_nonboot_cpus(void)
 {
 	int cpu, error;
+	struct device *cpu_device;
 
 	/* Allow everyone to use the CPU hotplug again */
 	cpu_maps_update_begin();
@@ -1186,6 +1209,12 @@ void enable_nonboot_cpus(void)
 		trace_suspend_resume(TPS("CPU_ON"), cpu, false);
 		if (!error) {
 			pr_info("CPU%d is up\n", cpu);
+			cpu_device = get_cpu_device(cpu);
+			if (!cpu_device)
+				pr_err("%s: failed to get cpu%d device\n",
+				       __func__, cpu);
+			else
+				kobject_uevent(&cpu_device->kobj, KOBJ_ONLINE);
 			continue;
 		}
 		pr_warn("Error taking CPU%d up: %d\n", cpu, error);
@@ -1912,6 +1941,11 @@ EXPORT_SYMBOL(__cpu_present_mask);
 struct cpumask __cpu_active_mask __read_mostly;
 EXPORT_SYMBOL(__cpu_active_mask);
 
+#ifdef CONFIG_HISI_CPU_ISOLATION
+struct cpumask __cpu_isolated_mask __read_mostly;
+EXPORT_SYMBOL(__cpu_isolated_mask);
+#endif
+
 void init_cpu_present(const struct cpumask *src)
 {
 	cpumask_copy(&__cpu_present_mask, src);
@@ -1927,6 +1961,13 @@ void init_cpu_online(const struct cpumask *src)
 	cpumask_copy(&__cpu_online_mask, src);
 }
 
+#ifdef CONFIG_HISI_CPU_ISOLATION
+void init_cpu_isolated(const struct cpumask *src)
+{
+	cpumask_copy(&__cpu_isolated_mask, src);
+}
+#endif
+
 /*
  * Activate the first processor.
  */
@@ -1939,6 +1980,9 @@ void __init boot_cpu_init(void)
 	set_cpu_active(cpu, true);
 	set_cpu_present(cpu, true);
 	set_cpu_possible(cpu, true);
+#ifdef CONFIG_HISI_CPU_ISOLATION
+	set_cpu_isolated(cpu, false);
+#endif
 }
 
 /*
@@ -1948,3 +1992,23 @@ void __init boot_cpu_state_init(void)
 {
 	per_cpu_ptr(&cpuhp_state, smp_processor_id())->state = CPUHP_ONLINE;
 }
+
+static ATOMIC_NOTIFIER_HEAD(idle_notifier);
+
+void idle_notifier_register(struct notifier_block *n)
+{
+	atomic_notifier_chain_register(&idle_notifier, n);
+}
+EXPORT_SYMBOL_GPL(idle_notifier_register);
+
+void idle_notifier_unregister(struct notifier_block *n)
+{
+	atomic_notifier_chain_unregister(&idle_notifier, n);
+}
+EXPORT_SYMBOL_GPL(idle_notifier_unregister);
+
+void idle_notifier_call_chain(unsigned long val)
+{
+	atomic_notifier_call_chain(&idle_notifier, val, NULL);
+}
+EXPORT_SYMBOL_GPL(idle_notifier_call_chain);

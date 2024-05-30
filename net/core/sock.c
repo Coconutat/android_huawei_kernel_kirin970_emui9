@@ -139,7 +139,20 @@
 #include <trace/events/sock.h>
 
 #include <net/tcp.h>
+
+#ifdef CONFIG_ANDROID_PARANOID_NETWORK
+#include <linux/android_aid.h>
+#endif
+
 #include <net/busy_poll.h>
+
+#ifdef CONFIG_HUAWEI_XENGINE
+#include <huawei_platform/emcom/emcom_xengine.h>
+#endif
+
+#ifdef CONFIG_HW_QTAGUID_PID
+#include <huawei_platform/net/qtaguid_pid/qtaguid_pid.h>
+#endif
 
 static DEFINE_MUTEX(proto_list_mutex);
 static LIST_HEAD(proto_list);
@@ -533,7 +546,11 @@ static int sock_setbindtodevice(struct sock *sk, char __user *optval,
 
 	/* Sorry... */
 	ret = -EPERM;
-	if (!ns_capable(net->user_ns, CAP_NET_RAW))
+	if (!ns_capable(net->user_ns, CAP_NET_RAW)
+#ifdef CONFIG_ANDROID_PARANOID_NETWORK
+		&& !in_egroup_p(AID_INET)
+#endif
+		)
 		goto out;
 
 	ret = -EINVAL;
@@ -664,6 +681,13 @@ int sock_setsockopt(struct socket *sock, int level, int optname,
 	/*
 	 *	Options without arguments
 	 */
+#ifdef CONFIG_HUAWEI_XENGINE
+	if (optname == SO_XENGINE_PROXYUID)
+		return Emcom_Xengine_SetProxyUid(sk, optval, optlen);
+
+	if (optname == SO_XENGINE_SOCKFLAG)
+		return Emcom_Xengine_SetSockFlag(sk, optval, optlen);
+#endif
 
 	if (optname == SO_BINDTODEVICE)
 		return sock_setbindtodevice(sk, optval, optlen);
@@ -1031,6 +1055,7 @@ int sock_getsockopt(struct socket *sock, int level, int optname,
 
 	union {
 		int val;
+		u64 val64;
 		struct linger ling;
 		struct timeval tm;
 	} v;
@@ -1261,6 +1286,21 @@ int sock_getsockopt(struct socket *sock, int level, int optname,
 		v.val = sk->sk_incoming_cpu;
 		break;
 
+#ifdef CONFIG_HUAWEI_XENGINE
+	case SO_XENGINE_PROXYUID:
+		return Emcom_Xengine_GetProxyUid(sk, optval, optlen, len);
+
+	case SO_XENGINE_SOCKFLAG:
+		v.val = sk->hicom_flag;
+		break;
+#endif
+
+	case SO_COOKIE:
+		lv = sizeof(u64);
+		if (len < lv)
+			return -EINVAL;
+		v.val64 = sock_gen_cookie(sk);
+		break;
 	default:
 		/* We implement the SO_SNDLOWAT etc to not be settable
 		 * (1003.1g 7).
@@ -1400,6 +1440,11 @@ struct sock *sk_alloc(struct net *net, int family, gfp_t priority,
 
 		mem_cgroup_sk_alloc(sk);
 		cgroup_sk_alloc(&sk->sk_cgrp_data);
+
+#ifdef CONFIG_HWDPI_MODULE
+		sk->sk_hwdpi_mark = 0;
+#endif
+
 		sock_update_classid(&sk->sk_cgrp_data);
 		sock_update_netprioidx(&sk->sk_cgrp_data);
 	}
@@ -1415,6 +1460,10 @@ static void __sk_destruct(struct rcu_head *head)
 {
 	struct sock *sk = container_of(head, struct sock, sk_rcu);
 	struct sk_filter *filter;
+
+#ifdef CONFIG_HUAWEI_BASTET
+	bastet_sock_release(sk);
+#endif
 
 	if (sk->sk_destruct)
 		sk->sk_destruct(sk);
@@ -2441,8 +2490,11 @@ void sock_init_data(struct socket *sock, struct sock *sk)
 		sk->sk_type	=	sock->type;
 		sk->sk_wq	=	sock->wq;
 		sock->sk	=	sk;
-	} else
+		sk->sk_uid	=	SOCK_INODE(sock)->i_uid;
+	} else {
 		sk->sk_wq	=	NULL;
+		sk->sk_uid	=	make_kuid(sock_net(sk)->user_ns, 0);
+	}
 
 	rwlock_init(&sk->sk_callback_lock);
 	lockdep_set_class_and_name(&sk->sk_callback_lock,
@@ -2475,7 +2527,15 @@ void sock_init_data(struct socket *sock, struct sock *sk)
 
 	sk->sk_max_pacing_rate = ~0U;
 	sk->sk_pacing_rate = ~0U;
+	sk->sk_pacing_shift = 10;
 	sk->sk_incoming_cpu = -1;
+#ifdef CONFIG_HUAWEI_XENGINE
+	sk->hicom_flag = 0;
+#endif
+#ifdef CONFIG_HW_DPIMARK_MODULE
+	sk->sk_born_stamp = jiffies;
+#endif
+
 	/*
 	 * Before updating sk_refcnt, we must commit prior changes to memory
 	 * (Documentation/RCU/rculist_nulls.txt for details)
@@ -2712,6 +2772,10 @@ EXPORT_SYMBOL(compat_sock_common_setsockopt);
 
 void sk_common_release(struct sock *sk)
 {
+#ifdef CONFIG_HW_QTAGUID_PID
+	qtaguid_pid_remove(sk);
+#endif
+
 	if (sk->sk_prot->destroy)
 		sk->sk_prot->destroy(sk);
 

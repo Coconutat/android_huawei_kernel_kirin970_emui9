@@ -80,10 +80,17 @@
 			   ARM_SMCCC_SMC_32,				\
 			   0, 0x8000)
 
+#define ARM_SMCCC_ARCH_WORKAROUND_2					\
+	ARM_SMCCC_CALL_VAL(ARM_SMCCC_FAST_CALL,				\
+			   ARM_SMCCC_SMC_32,				\
+			   0, 0x7fff)
+
 #ifndef __ASSEMBLY__
 
 #include <linux/linkage.h>
 #include <linux/types.h>
+#include <asm/compiler.h>
+
 /**
  * struct arm_smccc_res - Result from SMC/HVC call
  * @a0-a3 result values from registers 0 to 3
@@ -120,10 +127,39 @@ struct arm_smccc_quirk {
  * from register 0 to 3 on return from the SMC instruction.  An optional
  * quirk structure provides vendor specific behavior.
  */
-asmlinkage void __arm_smccc_smc(unsigned long a0, unsigned long a1,
+static inline void __arm_smccc_smc(unsigned long a0, unsigned long a1,
 			unsigned long a2, unsigned long a3, unsigned long a4,
 			unsigned long a5, unsigned long a6, unsigned long a7,
-			struct arm_smccc_res *res, struct arm_smccc_quirk *quirk);
+			struct arm_smccc_res *res, struct arm_smccc_quirk *quirk)
+{
+	register unsigned long arg0 asm("x0") = a0;
+	register unsigned long arg1 asm("x1") = a1;
+	register unsigned long arg2 asm("x2") = a2;
+	register unsigned long arg3 asm("x3") = a3;
+	register unsigned long arg4 asm("x4") = a4;
+	register unsigned long arg5 asm("x5") = a5;
+	register unsigned long arg6 asm("x6") = a6;
+	register unsigned long arg7 asm("x7") = a7;
+	asm volatile(
+		__asmeq("%0", "x0")
+		__asmeq("%1", "x1")
+		__asmeq("%2", "x2")
+		__asmeq("%3", "x3")
+		__asmeq("%4", "x4")
+		__asmeq("%5", "x5")
+		__asmeq("%6", "x6")
+		__asmeq("%7", "x7")
+		"smc #0\n"
+		: "+r" (arg0), "+r" (arg1), "+r" (arg2), "+r" (arg3)
+		: "r" (arg4), "r" (arg5), "r" (arg6), "r" (arg7));
+
+	res->a0 = arg0;
+	res->a1 = arg1;
+	res->a2 = arg2;
+	res->a3 = arg3;
+}
+
+
 
 /**
  * __arm_smccc_hvc() - make HVC calls
@@ -137,10 +173,37 @@ asmlinkage void __arm_smccc_smc(unsigned long a0, unsigned long a1,
  * the content from register 0 to 3 on return from the HVC instruction.  An
  * optional quirk structure provides vendor specific behavior.
  */
-asmlinkage void __arm_smccc_hvc(unsigned long a0, unsigned long a1,
+static inline void __arm_smccc_hvc(unsigned long a0, unsigned long a1,
 			unsigned long a2, unsigned long a3, unsigned long a4,
 			unsigned long a5, unsigned long a6, unsigned long a7,
-			struct arm_smccc_res *res, struct arm_smccc_quirk *quirk);
+			struct arm_smccc_res *res, struct arm_smccc_quirk *quirk)
+{
+	register unsigned long arg0 asm("x0") = a0;
+	register unsigned long arg1 asm("x1") = a1;
+	register unsigned long arg2 asm("x2") = a2;
+	register unsigned long arg3 asm("x3") = a3;
+	register unsigned long arg4 asm("x4") = a4;
+	register unsigned long arg5 asm("x5") = a5;
+	register unsigned long arg6 asm("x6") = a6;
+	register unsigned long arg7 asm("x7") = a7;
+	asm volatile(
+		__asmeq("%0", "x0")
+		__asmeq("%1", "x1")
+		__asmeq("%2", "x2")
+		__asmeq("%3", "x3")
+		__asmeq("%4", "x4")
+		__asmeq("%5", "x5")
+		__asmeq("%6", "x6")
+		__asmeq("%7", "x7")
+		"hvc #0\n"
+		: "+r" (arg0), "+r" (arg1), "+r" (arg2), "+r" (arg3)
+		: "r" (arg4), "r" (arg5), "r" (arg6), "r" (arg7));
+
+	res->a0 = arg0;
+	res->a1 = arg1;
+	res->a2 = arg2;
+	res->a3 = arg3;
+}
 
 #define arm_smccc_smc(...) __arm_smccc_smc(__VA_ARGS__, NULL)
 
@@ -155,6 +218,7 @@ asmlinkage void __arm_smccc_hvc(unsigned long a0, unsigned long a1,
 
 #define SMCCC_SMC_INST	"smc	#0"
 #define SMCCC_HVC_INST	"hvc	#0"
+#define SMCCC_REG(n)	asm("x" # n)
 
 #elif defined(CONFIG_ARM)
 #include <asm/opcodes-sec.h>
@@ -162,6 +226,7 @@ asmlinkage void __arm_smccc_hvc(unsigned long a0, unsigned long a1,
 
 #define SMCCC_SMC_INST	__SMC(0)
 #define SMCCC_HVC_INST	__HVC(0)
+#define SMCCC_REG(n)	asm("r" # n)
 
 #endif
 
@@ -194,47 +259,47 @@ asmlinkage void __arm_smccc_hvc(unsigned long a0, unsigned long a1,
 
 #define __declare_arg_0(a0, res)					\
 	struct arm_smccc_res   *___res = res;				\
-	register u32           r0 asm("r0") = a0;			\
-	register unsigned long r1 asm("r1");				\
-	register unsigned long r2 asm("r2");				\
-	register unsigned long r3 asm("r3")
+	register u32           r0 SMCCC_REG(0) = a0;			\
+	register unsigned long r1 SMCCC_REG(1);				\
+	register unsigned long r2 SMCCC_REG(2);				\
+	register unsigned long r3 SMCCC_REG(3)
 
 #define __declare_arg_1(a0, a1, res)					\
 	struct arm_smccc_res   *___res = res;				\
-	register u32           r0 asm("r0") = a0;			\
-	register typeof(a1)    r1 asm("r1") = a1;			\
-	register unsigned long r2 asm("r2");				\
-	register unsigned long r3 asm("r3")
+	register u32           r0 SMCCC_REG(0) = a0;			\
+	register typeof(a1)    r1 SMCCC_REG(1) = a1;			\
+	register unsigned long r2 SMCCC_REG(2);				\
+	register unsigned long r3 SMCCC_REG(3)
 
 #define __declare_arg_2(a0, a1, a2, res)				\
 	struct arm_smccc_res   *___res = res;				\
-	register u32           r0 asm("r0") = a0;			\
-	register typeof(a1)    r1 asm("r1") = a1;			\
-	register typeof(a2)    r2 asm("r2") = a2;			\
-	register unsigned long r3 asm("r3")
+	register u32           r0 SMCCC_REG(0) = a0;			\
+	register typeof(a1)    r1 SMCCC_REG(1) = a1;			\
+	register typeof(a2)    r2 SMCCC_REG(2) = a2;			\
+	register unsigned long r3 SMCCC_REG(3)
 
 #define __declare_arg_3(a0, a1, a2, a3, res)				\
 	struct arm_smccc_res   *___res = res;				\
-	register u32           r0 asm("r0") = a0;			\
-	register typeof(a1)    r1 asm("r1") = a1;			\
-	register typeof(a2)    r2 asm("r2") = a2;			\
-	register typeof(a3)    r3 asm("r3") = a3
+	register u32           r0 SMCCC_REG(0) = a0;			\
+	register typeof(a1)    r1 SMCCC_REG(1) = a1;			\
+	register typeof(a2)    r2 SMCCC_REG(2) = a2;			\
+	register typeof(a3)    r3 SMCCC_REG(3) = a3
 
 #define __declare_arg_4(a0, a1, a2, a3, a4, res)			\
 	__declare_arg_3(a0, a1, a2, a3, res);				\
-	register typeof(a4) r4 asm("r4") = a4
+	register typeof(a4) r4 SMCCC_REG(4) = a4
 
 #define __declare_arg_5(a0, a1, a2, a3, a4, a5, res)			\
 	__declare_arg_4(a0, a1, a2, a3, a4, res);			\
-	register typeof(a5) r5 asm("r5") = a5
+	register typeof(a5) r5 SMCCC_REG(5) = a5
 
 #define __declare_arg_6(a0, a1, a2, a3, a4, a5, a6, res)		\
 	__declare_arg_5(a0, a1, a2, a3, a4, a5, res);			\
-	register typeof(a6) r6 asm("r6") = a6
+	register typeof(a6) r6 SMCCC_REG(6) = a6
 
 #define __declare_arg_7(a0, a1, a2, a3, a4, a5, a6, a7, res)		\
 	__declare_arg_6(a0, a1, a2, a3, a4, a5, a6, res);		\
-	register typeof(a7) r7 asm("r7") = a7
+	register typeof(a7) r7 SMCCC_REG(7) = a7
 
 #define ___declare_args(count, ...) __declare_arg_ ## count(__VA_ARGS__)
 #define __declare_args(count, ...)  ___declare_args(count, __VA_ARGS__)
@@ -290,6 +355,11 @@ asmlinkage void __arm_smccc_hvc(unsigned long a0, unsigned long a1,
  * from register 0 to 3 on return from the HVC instruction if not NULL.
  */
 #define arm_smccc_1_1_hvc(...)	__arm_smccc_1_1(SMCCC_HVC_INST, __VA_ARGS__)
+
+/* Return codes defined in ARM DEN 0070A */
+#define SMCCC_RET_SUCCESS			0
+#define SMCCC_RET_NOT_SUPPORTED			-1
+#define SMCCC_RET_NOT_REQUIRED			-2
 
 #endif /*__ASSEMBLY__*/
 #endif /*__LINUX_ARM_SMCCC_H*/
