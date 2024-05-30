@@ -3,8 +3,9 @@
 **语言:**
 [English](README.md) | **简体中文**
 ***
-
-<a href="https://imgse.com/i/pk3fT4H" style="text-align:center;">雪豹内核<img src="https://s21.ax1x.com/2024/05/30/pk3fT4H.jpg" alt="雪豹" border="0" /></a>
+<div align="center">
+<a href="https://imgse.com/i/pk3fT4H" style="text-align:center;"><img src="https://s21.ax1x.com/2024/05/30/pk3fT4H.jpg" alt="雪豹" border="0" /></a>
+</div">
 
 ## 警告:  
 **在进行任何操作之前，请备份所有重要数据和固件包。**    

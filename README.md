@@ -3,8 +3,9 @@
 **Language:**
 **English** | [简体中文](README_CN.md)   
 ***
-
-<a href="https://imgse.com/i/pk3fT4H" style="text-align:center;">Snow Leopard Kernel<img src="https://s21.ax1x.com/2024/05/30/pk3fT4H.jpg" alt="Snow Leopard" border="0" /></a>
+<div align="center">
+<a href="https://imgse.com/i/pk3fT4H" style="text-align:center;"><img src="https://s21.ax1x.com/2024/05/30/pk3fT4H.jpg" alt="雪豹" border="0" /></a>
+</div">
 
 ## Warning:  
 **Before doing anything, please backup any important data and firmware packages.**    
