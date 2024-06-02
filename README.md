@@ -25,6 +25,7 @@ Feature:
   4. Little tweaks.
   5. Upstreamed Kernel.
   6. Experimental support for KernelSU.  
-
+    > Warning: Starting from June 2024, KernelSU has abandoned support for old devices. The final version of KernelSU code that supports old devices is v0.9.5 (11872).  
+      
 
 ***
